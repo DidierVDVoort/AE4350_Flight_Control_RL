@@ -22,26 +22,28 @@ class Plane:
 # Plane simulation environment
 class PlaneSim:
     def __init__(self, n_planes=5):
-        self.size = 250 # size of the simulation area
-        self.max_steps = 300 # maximum steps per episode
-        self.collision_radius = 20 # radius for collision detection
+        self.size = 100 # size of the simulation area
+        self.current_step = 0 # current step of the simulation
+        self.max_steps = 50 # maximum steps per episode
+        self.collision_radius = 10 # radius for collision detection
         self.n_planes = n_planes # number of planes
         self.planes = []
         self.landing_status = {} # dictionary to track landing status of planes and their landing zones
-        
+        self.collision = False # flag to indicate if a collision has occurred
+        self.done = False # flag to indicate if the simulation is done
+
         # Define runways: position and heading --> tuple with (center position, heading in radians)
         self.runways = [
-            (np.array([100, 125]), 0),         # Runway facing to the right
-            (np.array([150, 75]), np.pi / 4),  # Another facing diagonally up-right
+            (np.array([100, 125]), 0),        # runway facing to the right
+            (np.array([150, 75]), np.pi / 4), # another facing diagonally up-right
         ]
         self.runway_length = 50 # length of each runway
 
         # Define heli pads: position and radius
         self.helipad_pos = [
-            np.array([100, 125]),
-            np.array([150, 75])
+            np.array([10, 10])
         ]
-        self.helipad_radius = 30 # radius of the heli pad
+        self.helipad_radius = 10 # radius of the heli pad
 
         # Landing triangle parameters
         self.landing_triangle_length = 60
@@ -49,13 +51,32 @@ class PlaneSim:
         self.triangle_offset = 30
 
         # RL Parameters
-        self.state_size = 6 * n_planes # each plane: [x, y, dx, dy, rel_x, rel_y]
-        self.action_space = 5 # actions: [None, Up, Down, Left, Right]
+        self.state_size = 3 * n_planes
+        self.action_space = 5 # actions: [none, up, down, left, right]
 
         # Initialize planes
-        np.random.seed(42) # make random choices reproducible
+        np.random.seed(5) # make random choices reproducible
         self.reset()
-    
+
+    # Discretize the state space
+    def discretize_state(self, state, bins=10):
+        # Initialize discretized state space to normalize and bin each state
+        discretized = []
+        
+        # Plane position (x,y) normalized to [0,1]
+        discretized.append(np.digitize(state[0]/self.size, np.linspace(0, 1, bins)) - 1)
+        discretized.append(np.digitize(state[1]/self.size, np.linspace(0, 1, bins)) - 1)
+        
+        # Distance to target normalized to [0,1]
+        max_dist = np.sqrt(2 * self.size**2) # maximum possible distance
+        discretized.append(np.digitize(state[2]/max_dist, np.linspace(0, 1, bins)) - 1)
+        
+        # Relative heading is already in [-pi, pi]
+        discretized.append(np.digitize(state[3], np.linspace(-np.pi, np.pi, bins)) - 1)
+        
+        return tuple(discretized)
+
+    # Get the current state (right now unused, instead get_simple_state is used)
     def get_state(self):
         state = []
         for plane in self.planes:
@@ -76,7 +97,70 @@ class PlaneSim:
             else:
                 state.extend([0, 0, 0, 0, 0, 0])  # zero everything for inactive
         return np.array(state)
-    
+
+    # Simpler state space representation
+    def get_simple_state(self):
+        state = []
+        for plane in self.planes:
+            if plane.active:
+                # Choose correct landing zone type
+                landing_zones = self.helipad_pos
+
+                # Nearest landing zone position
+                target_pos = min(landing_zones, key=lambda p: np.linalg.norm(plane.position - p))
+
+                # Distance to nearest landing zone
+                dist = np.linalg.norm(target_pos - plane.position)
+
+                # Bearing from plane to nearest landing zone
+                bearing_to_target = np.arctan2(
+                    target_pos[1] - plane.position[1],
+                    target_pos[0] - plane.position[0]
+                )
+
+                # Relative heading of plane w.r.t. nearest landing zone)
+                rel_heading = bearing_to_target - plane.heading
+                rel_heading = (rel_heading + np.pi) % (2 * np.pi) - np.pi # (clamp to [-pi, pi]
+
+                # Add to state: plane position (x and y), distance, and relative heading
+                state.extend([plane.position[0], plane.position[1], dist, rel_heading])
+            else:
+                # Inactive plane --> all states 0
+                state.extend([0, 0, 0, 0])
+        return np.array(state, dtype=np.float32)
+
+    # Get the intruder state (relative positions and headings of all other planes) --> not used not, instead get_simple_state is used
+    def get_intruder_state(self):
+        state = []
+        active_planes = [p for p in self.planes if p.active]
+
+        for i, plane in enumerate(self.planes):
+            if plane.active:
+                count = 0
+                for j, other in enumerate(self.planes):
+                    if i == j or not other.active:
+                        continue
+
+                    vec = other.position - plane.position
+                    dist = np.linalg.norm(vec)
+                    angle = np.arctan2(vec[1], vec[0])
+                    rel_angle = (angle - plane.heading + np.pi) % (2*np.pi) - np.pi
+                    heading_diff = (other.heading - plane.heading + np.pi) % (2*np.pi) - np.pi
+
+                    state.extend([dist, rel_angle, heading_diff])
+                    count += 1
+
+                # pad if fewer intruders
+                while count < self.n_planes - 1:
+                    state.extend([0, 0, 0])
+                    count += 1
+            else:
+                # inactive plane
+                state.extend([0, 0, 0] * (self.n_planes - 1))
+
+        return np.array(state)
+
+    # Get the reward (not used right now, instead get_simple_reward is used)
     def get_reward(self):
         # Different reward components for logging
         components = {
@@ -96,8 +180,8 @@ class PlaneSim:
         # Landing rewards (for helicopters)
         for helipad_pos in self.helipad_pos:
             for plane in self.planes:
-                if self.crossed_helipad(plane, helipad_pos):
-                    components['landing'] += 1.0  # Full reward for landing successfully
+                if plane.active and self.crossed_helipad(plane, helipad_pos):
+                    components['landing'] += 1.0 # full reward for landing successfully
 
         # # Tiny progress reward (distance to nearest runway) (for planes so not used for now)
         # for plane in self.planes:
@@ -109,47 +193,98 @@ class PlaneSim:
         for plane in self.planes:
             if plane.active:
                 min_dist = min(np.linalg.norm(plane.position - helipad) for helipad in self.helipad_pos)
-                components['progress'] += 0.01 * (self.size - min_dist) / self.size
+                components['progress'] += (0.5 * (self.size - min_dist) / self.size) / self.max_steps
         
         # Penalties for collisions and edge hits
         for i in range(len(self.planes)):
             for j in range(i+1, len(self.planes)):
-                if self.check_collision(self.planes[i], self.planes[j]):
-                    components['collision'] -= 0.7 # severe penalty for collision
+                if self.planes[i].active and self.planes[j].active and self.check_collision(self.planes[i], self.planes[j]):
+                    components['collision'] -= 1 # severe penalty for collision
                     
             if self.edge_hit_occurred:
-                components['edge'] -= 0.5 # small penalty for hitting the edge
-        
+                components['edge'] -= 0.5 / self.max_steps # small penalty for hitting the edge
+
         total = sum(components.values())
-        return np.clip(total, -1, 1), components # also return breakdown of components for logging
+        return total, components # also return breakdown of components for logging
+
+    # Simpler reward function
+    def get_simple_reward(self, action):
+        reward = 0
+        time_penalty = -0.01 # encourages faster landings
+        
+        # 1. Landing reward (time-discounted, i.e. more reward if landed earlier)
+        for helipad_pos in self.helipad_pos:
+            for plane in self.planes:
+                if plane.active and self.crossed_helipad(plane, helipad_pos):
+                    time_factor = 1.0 - (self.current_step / self.max_steps)
+                    reward += 100.0 * (0.5 + 0.5*time_factor) # 100-50 points based on when they land
+                    plane.active = False # deactivate plane after landing
+
+        # 2. Distance-based reward (more reward as planes get closer to landing zone)
+        active_count = sum(1 for p in self.planes if p.active)
+        for plane in self.planes:
+            if plane.active:
+                min_dist = min(np.linalg.norm(plane.position - hp) for hp in self.helipad_pos) # distance to nearest helipad
+                reward += (1 - (min_dist / self.size)) * (0.5 / max(1, active_count)) # scaled with active plane count
+
+        # 3. Penalize getting too close to edges
+        # edge_threshold = 0.1 * self.size
+        # for plane in self.planes:
+        #     if plane.active:
+        #         x, y = plane.position
+        #         near_edge = (x < edge_threshold or x > self.size - edge_threshold or
+        #                     y < edge_threshold or y > self.size - edge_threshold)
+        #         if near_edge:
+        #             reward -= 0.2
+
+        # # 4. Collision penalty
+        # if self.collision:
+        #     reward -= 10.0
+
+        # # 5. Small penalty for unnecessary turns
+        # if action != 0:
+        #     reward -= 0.05
+            
+        return reward + time_penalty
 
     # Initialize the simulation with random planes
     def reset(self):
+        self.collision = False
+        self.done = False
         self.planes = []
+        self.current_step = 0
+        
+        min_spawn_distance = 0.2 * self.size # minimum distance between any two planes at spawn
+        spawn_positions = []
+
         for _ in range(self.n_planes):
-            side = np.random.choice(['top', 'left', 'right', 'bottom'])
-            angle_variation = np.pi / 6 # 30 degrees variation in incoming heading
+            max_attempts = 100 # prevent infinite loops
+            for _ in range(max_attempts):
+                side = np.random.choice(['top', 'left', 'right', 'bottom'])
+                angle_variation = np.pi / 6 # 30 degrees variation in incoming heading
 
-            # Randomly place planes on one of the four sides
-            if side == 'top':
-                pos = [np.random.uniform(100, 900), 1000]
-                base_heading = -np.pi / 2 # mostly downward
-            elif side == 'left':
-                pos = [0, np.random.uniform(100, 900)]
-                base_heading = 0 # mostly right
-            elif side == 'right':
-                pos = [1000, np.random.uniform(100, 900)]
-                base_heading = np.pi # mostly left
-            else: # bottom
-                pos = [np.random.uniform(100, 900), 0]
-                base_heading = np.pi / 2 # mostly upward
+                # Randomly place planes on one of the four sides
+                if side == 'top':
+                    pos = [np.random.uniform(0.1*self.size, 0.9*self.size), self.size]
+                    base_heading = -np.pi / 2 # mostly downward
+                elif side == 'left':
+                    pos = [0, np.random.uniform(0.1*self.size, 0.9*self.size)]
+                    base_heading = 0 # mostly right
+                elif side == 'right':
+                    pos = [self.size, np.random.uniform(0.1*self.size, 0.9*self.size)]
+                    base_heading = np.pi # mostly left
+                else:  # bottom
+                    pos = [np.random.uniform(0.1*self.size, 0.9*self.size), 0]
+                    base_heading = np.pi / 2 # mostly upward
 
-            # Add some random variation to incoming heading
-            heading = base_heading + np.random.uniform(-angle_variation, angle_variation)
-            
-            # Create plane with random position and heading
-            self.planes.append(Plane(pos, heading))
-            self.landing_status = {i: None for i in range(self.n_planes)}
+                # Check distance to existing spawn positions
+                if all(np.linalg.norm(np.array(pos) - np.array(existing)) >= min_spawn_distance for existing in spawn_positions):
+                    spawn_positions.append(pos)
+                    heading = base_heading + np.random.uniform(-angle_variation, angle_variation)
+                    self.planes.append(Plane(pos, heading))
+                    break
+            else:
+                raise ValueError("Failed to place plane without collision after 100 attempts.")
 
     # Check if a PLANE has crossed the landing triangle base (not used for now)
     def crossed_triangle_base(self, plane, runway_pos, runway_heading):
@@ -219,11 +354,27 @@ class PlaneSim:
             plane.heading = (plane.heading + np.pi) % (2 * np.pi) - np.pi
     
         return bounced
+    
+    # Not used for now
+    def find_intruder_pairs(self, threshold=60):
+        intruder_pairs = []
+        for i, p1 in enumerate(self.planes):
+            if not p1.active:
+                continue
+            for j in range(i + 1, len(self.planes)):
+                p2 = self.planes[j]
+                if not p2.active:
+                    continue
+                dist = np.linalg.norm(p1.position - p2.position)
+                if dist < threshold:
+                    intruder_pairs.append((i, j))
+        return intruder_pairs
 
     # Step the simulation (basically update plane positions and check for collisions/landings)
     def step(self):
         # Reset edge hit status (for reward)
         self.edge_hit_occurred = False
+        self.current_step += 1
 
         # Step each plane
         for plane in self.planes:
@@ -271,7 +422,9 @@ class PlaneSim:
             for helipad_pos in self.helipad_pos:
                 if self.crossed_helipad(plane, helipad_pos):
                     print(f"Helicopter {i} landed on helipad at {helipad_pos}")
-                    plane.active = False
+
+        # Check if all planes are inactive (i.e. all have landed or crashed)
+        self.done = all(not plane.active for plane in self.planes)
 
         # Collision check
         for i in range(len(self.planes)):
@@ -282,6 +435,8 @@ class PlaneSim:
                     # Deactivate both planes
                     p1.active = False
                     p2.active = False
+                    self.collision = True # set collision flag
+                    self.done = True # set done flag to True if any plane collides
 
     # Render the simulation
     def render(self, ax=None):
