@@ -4,7 +4,7 @@ from sim import PlaneSim
 import matplotlib
 import numpy as np
 import torch
-from q_learning_agent import QLearningAgent
+from q_learning_agent import QLearningAgent, QLearningMultiAgent
 from itertools import count
 
 # Training hyperparameters
@@ -23,7 +23,7 @@ turn_increments = { # Define turn angles in radians
 }
 
 # Environment
-env = PlaneSim(n_planes=1)
+env = PlaneSim(n_planes=2)
 
 # Set up matplotlib for plotting
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -39,14 +39,13 @@ device = torch.device(
     "cpu"
 )
 
-# Define agent
-agent = QLearningAgent(
-    env=env,
+# Define agents (one for each plane)
+agents = [QLearningMultiAgent(plane_idx=i, env=env,
     learning_rate=learning_rate,
     initial_epsilon=start_epsilon,
     epsilon_decay=epsilon_decay,
-    final_epsilon=final_epsilon,
-)
+    final_epsilon=final_epsilon
+) for i in range(env.n_planes)]
 
 # Live reward plotting function
 def plot_rewards(show_result=False):
@@ -86,48 +85,59 @@ for episode in tqdm(range(n_episodes)):
     # Reset environment
     env.reset()
     done = False
-    total_reward = 0
+    obs = [] # initialize observations (for each agent)
+    total_reward = [0 for _ in range(env.n_planes)] # list of total rewards (one entry per agent)
 
     # Log average reward every 100 episodes
     if episode % 100 == 0:
         print(f"Ep {episode}: Avg Reward {np.mean(episode_rewards[-100:])}")
 
-    # Get initial observation
-    raw_state = env.get_simple_state()
-    obs = tuple(env.discretize_state(raw_state))
+    # Get initial observations
+    for agent in agents:
+        raw_state = env.get_simple_state(agent.plane_idx)
+        obs.append(tuple(env.discretize_state(raw_state)))
 
     # Play one complete simulation (until all planes landed, collided or max. steps is reached)
     for t in count():
-        # Agent chooses action for each plane (initially random, gradually more intelligent)
-        actions = agent.get_action(obs)
+        actions = [] # reset actions every time (need to be stored for the agent.update() function)
+        
+        # Agents choose action for their plane (initially random, gradually more intelligent)
+        for agent in agents:
+            action = agent.get_action(obs[agent.plane_idx])
+            actions.append(action)
 
-        # Apply the actions to the planes
-        for i, action in enumerate([actions]):
-            if action != 0 and env.planes[i].active:
-                env.planes[i].heading += turn_increments[action]
-                env.planes[i].heading = (env.planes[i].heading + np.pi) % (2 * np.pi) - np.pi # clamp heading to [-pi, pi]
+            # Apply the action to the plane
+            if action != 0 and env.planes[agent.plane_idx].active:
+                env.planes[agent.plane_idx].heading += turn_increments[action]
+                env.planes[agent.plane_idx].heading = (env.planes[agent.plane_idx].heading + np.pi) % (2 * np.pi) - np.pi # clamp heading to [-pi, pi]
 
         # Observe results of the taken actions
         env.step() # step the environment
-        raw_next_obs = env.get_simple_state() # new state (raw)
-        next_obs = tuple(env.discretize_state(raw_next_obs)) # new state (discretized)
-        reward = env.get_simple_reward(action)
-        total_reward += reward
         terminated = env.done or t == env.max_steps
 
-        # Let the agent learn from this environment step
-        agent.update(obs, action, reward, terminated, next_obs)
+        # Loop over agents (planes) and update them with the new observations and rewards
+        for agent in agents:
+            raw_next_obs = env.get_simple_state(agent.plane_idx) # new state (raw)
+            next_obs = tuple(env.discretize_state(raw_next_obs)) # new state (discretized)
+            reward = env.get_simple_reward(agent.plane_idx)
+            total_reward[agent.plane_idx] += reward
 
-        # Move to next state
-        obs = next_obs
+            # Let the agent learn from this environment step
+            agent.update(obs[agent.plane_idx], actions[agent.plane_idx], reward, terminated, next_obs)
+
+            # Move to next state
+            obs[agent.plane_idx] = next_obs
 
         if terminated:
-            episode_rewards.append(total_reward)
+            episode_rewards.append(sum(total_reward))
+            print(f"Planes landed: {sum(1 for p in env.planes if not p.active and not env.collision)}/{env.n_planes}")
             plot_rewards()
             break
 
     # Reduce exploration rate (agent becomes less random over time)
-    agent.decay_epsilon()
+    for agent in agents:
+        agent.decay_epsilon()
 
-# Save the trained policy
-torch.save(dict(agent.q_values), "policy.pth")
+# Save all policies (i.e. 1 for each agent) in a dictionary with their indices as keys
+policies = {i: dict(agent.q_values) for i, agent in enumerate(agents)}
+torch.save(policies, "policy_multi_agent.pth")

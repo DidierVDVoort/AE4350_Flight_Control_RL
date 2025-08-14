@@ -41,7 +41,7 @@ class PlaneSim:
 
         # Define heli pads: position and radius
         self.helipad_pos = [
-            np.array([10, 10])
+            np.array([50, 50])
         ]
         self.helipad_radius = 10 # radius of the heli pad
 
@@ -73,7 +73,10 @@ class PlaneSim:
         
         # Relative heading is already in [-pi, pi]
         discretized.append(np.digitize(state[3], np.linspace(-np.pi, np.pi, bins)) - 1)
-        
+
+        # Distance to closest other plane normalized to [0,1]
+        discretized.append(np.digitize(state[4]/max_dist, np.linspace(0, 1, bins)) - 1)
+
         return tuple(discretized)
 
     # Get the current state (right now unused, instead get_simple_state is used)
@@ -99,34 +102,42 @@ class PlaneSim:
         return np.array(state)
 
     # Simpler state space representation
-    def get_simple_state(self):
+    def get_simple_state(self, plane_idx):
         state = []
-        for plane in self.planes:
-            if plane.active:
-                # Choose correct landing zone type
-                landing_zones = self.helipad_pos
+        plane = self.planes[plane_idx]
 
-                # Nearest landing zone position
-                target_pos = min(landing_zones, key=lambda p: np.linalg.norm(plane.position - p))
+        if plane.active:
+            # Choose correct landing zone type
+            landing_zones = self.helipad_pos
 
-                # Distance to nearest landing zone
-                dist = np.linalg.norm(target_pos - plane.position)
+            # Nearest landing zone position
+            target_pos = min(landing_zones, key=lambda p: np.linalg.norm(plane.position - p))
 
-                # Bearing from plane to nearest landing zone
-                bearing_to_target = np.arctan2(
-                    target_pos[1] - plane.position[1],
-                    target_pos[0] - plane.position[0]
-                )
+            # Distance to nearest landing zone
+            dist = np.linalg.norm(target_pos - plane.position)
 
-                # Relative heading of plane w.r.t. nearest landing zone)
-                rel_heading = bearing_to_target - plane.heading
-                rel_heading = (rel_heading + np.pi) % (2 * np.pi) - np.pi # (clamp to [-pi, pi]
+            # Bearing from plane to nearest landing zone
+            bearing_to_target = np.arctan2(
+                target_pos[1] - plane.position[1],
+                target_pos[0] - plane.position[0]
+            )
 
-                # Add to state: plane position (x and y), distance, and relative heading
-                state.extend([plane.position[0], plane.position[1], dist, rel_heading])
-            else:
-                # Inactive plane --> all states 0
-                state.extend([0, 0, 0, 0])
+            # Relative heading of plane w.r.t. nearest landing zone
+            rel_heading = bearing_to_target - plane.heading
+            rel_heading = (rel_heading + np.pi) % (2 * np.pi) - np.pi # clamp to [-pi, pi]
+
+            # Nearest other plane (for collision avoidance)
+            other_dists = []
+            for j, other in enumerate(self.planes):
+                if plane_idx != j and other.active:
+                    other_dists.append(np.linalg.norm(plane.position - other.position))
+            nearest_dist = min(other_dists) if other_dists else self.size * 2 # 2 * environment size if no other planes
+
+            # Add to state: plane position (x and y), distance to landing zone, relative heading to landing zone, and distance to nearest other plane
+            state = [plane.position[0], plane.position[1], dist, rel_heading, nearest_dist]
+        else:
+            # Inactive plane --> all states 0
+            state = [0, 0, 0, 0, 0]
         return np.array(state, dtype=np.float32)
 
     # Get the intruder state (relative positions and headings of all other planes) --> not used not, instead get_simple_state is used
@@ -208,24 +219,24 @@ class PlaneSim:
         return total, components # also return breakdown of components for logging
 
     # Simpler reward function
-    def get_simple_reward(self, action):
+    def get_simple_reward(self, plane_idx):
         reward = 0
         time_penalty = -0.01 # encourages faster landings
+        plane = self.planes[plane_idx]
         
         # 1. Landing reward (time-discounted, i.e. more reward if landed earlier)
         for helipad_pos in self.helipad_pos:
-            for plane in self.planes:
-                if plane.active and self.crossed_helipad(plane, helipad_pos):
-                    time_factor = 1.0 - (self.current_step / self.max_steps)
-                    reward += 100.0 * (0.5 + 0.5*time_factor) # 100-50 points based on when they land
-                    plane.active = False # deactivate plane after landing
+            if plane.active and self.crossed_helipad(plane, helipad_pos):
+                time_factor = 1.0 - (self.current_step / self.max_steps)
+                reward += 100.0 * (0.5 + 0.5*time_factor) # 100-50 points based on when they land
+                plane.active = False # deactivate plane after landing
 
         # 2. Distance-based reward (more reward as planes get closer to landing zone)
         active_count = sum(1 for p in self.planes if p.active)
-        for plane in self.planes:
-            if plane.active:
-                min_dist = min(np.linalg.norm(plane.position - hp) for hp in self.helipad_pos) # distance to nearest helipad
-                reward += (1 - (min_dist / self.size)) * (0.5 / max(1, active_count)) # scaled with active plane count
+        active_count = 1
+        if plane.active:
+            min_dist = min(np.linalg.norm(plane.position - hp) for hp in self.helipad_pos) # distance to nearest helipad
+            reward += (1 - (min_dist / self.size)) * (0.5 / max(1, active_count)) # scaled with active plane count
 
         # 3. Penalize getting too close to edges
         # edge_threshold = 0.1 * self.size
@@ -237,14 +248,15 @@ class PlaneSim:
         #         if near_edge:
         #             reward -= 0.2
 
-        # # 4. Collision penalty
+        # # 4. Collision penalty (currently makes it worse, so investigate this)
         # if self.collision:
         #     reward -= 10.0
 
         # # 5. Small penalty for unnecessary turns
-        # if action != 0:
-        #     reward -= 0.05
-            
+        # for action in actions:
+        #     if action != 0:
+        #         reward -= 0.05
+
         return reward + time_penalty
 
     # Initialize the simulation with random planes
