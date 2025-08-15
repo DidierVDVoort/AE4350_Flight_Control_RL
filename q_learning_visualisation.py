@@ -143,10 +143,7 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
             plt.pause(0.05)
             
             # Check if figure is closed
-            if not plt.fignum_exists(fig.number):
-                break
-                
-            if terminated:
+            if not plt.fignum_exists(fig.number) or terminated:
                 break
     
     except KeyboardInterrupt:
@@ -157,9 +154,9 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
         plt.show()
 
         # Print final results
-        print(f"Final total reward: {total_reward:.2f}")
+        print(f"Final total reward: {sum(total_reward):.2f}")
         print(f"Collision occurred: {env.collision}")
         print(f"Number of planes landed: {sum(1 for p in env.planes if not p.active and not env.collision)}/{n_planes}")
 
 if __name__ == "__main__":
-    visualize_q_policy(model_path='policy_multi_agent.pth', n_planes=2)
+    visualize_q_policy(model_path='policy_multi_agent_3_planes.pth', n_planes=3)

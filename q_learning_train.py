@@ -9,7 +9,7 @@ from itertools import count
 
 # Training hyperparameters
 learning_rate = 0.01
-n_episodes = 500
+n_episodes = 2000
 start_epsilon = 1.0 # start with 100% random actions
 epsilon_decay = start_epsilon / (n_episodes / 2) # reduces exploration over time
 final_epsilon = 0.1 # always keep some exploration
@@ -23,7 +23,7 @@ turn_increments = { # Define turn angles in radians
 }
 
 # Environment
-env = PlaneSim(n_planes=2)
+env = PlaneSim(n_planes=3)
 
 # Set up matplotlib for plotting
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -84,7 +84,6 @@ episode_rewards = [] # store episode rewards
 for episode in tqdm(range(n_episodes)):
     # Reset environment
     env.reset()
-    done = False
     obs = [] # initialize observations (for each agent)
     total_reward = [0 for _ in range(env.n_planes)] # list of total rewards (one entry per agent)
 
@@ -140,4 +139,4 @@ for episode in tqdm(range(n_episodes)):
 
 # Save all policies (i.e. 1 for each agent) in a dictionary with their indices as keys
 policies = {i: dict(agent.q_values) for i, agent in enumerate(agents)}
-torch.save(policies, "policy_multi_agent.pth")
+torch.save(policies, "policy_multi_agent_3_planes.pth")
