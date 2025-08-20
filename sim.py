@@ -41,7 +41,8 @@ class PlaneSim:
 
         # Define heli pads: position and radius
         self.helipad_pos = [
-            np.array([90, 50])
+            np.array([80, 50]),
+            np.array([20, 20])
         ]
         self.helipad_radius = 10 # radius of the heli pad
 
@@ -55,7 +56,6 @@ class PlaneSim:
         self.action_space = 5 # actions: [none, up, down, left, right]
 
         # Initialize planes
-        np.random.seed(5) # make random choices reproducible
         self.reset()
 
     # Discretize the state space
@@ -71,11 +71,14 @@ class PlaneSim:
         max_dist = np.sqrt(2 * self.size**2) # maximum possible distance
         discretized.append(np.digitize(state[2]/max_dist, np.linspace(0, 1, bins)) - 1)
         
-        # Relative heading is already in [-pi, pi]
+        # Relative heading to target is already in [-pi, pi]
         discretized.append(np.digitize(state[3], np.linspace(-np.pi, np.pi, bins)) - 1)
 
         # Distance to closest other plane normalized to [0,1]
         discretized.append(np.digitize(state[4]/max_dist, np.linspace(0, 1, bins)) - 1)
+
+        # Relative heading to closest other plane is already in [-pi, pi]
+        discretized.append(np.digitize(state[5], np.linspace(-np.pi, np.pi, bins)) - 1)
 
         return tuple(discretized)
 
@@ -333,7 +336,7 @@ class PlaneSim:
         for _ in range(self.n_planes):
             max_attempts = 100 # prevent infinite loops
             for _ in range(max_attempts):
-                side = np.random.choice(['top', 'left']) # only top and left now (for testing collision avoidance)
+                side = np.random.choice(['top', 'left', 'right', 'bottom']) # only top and left now (for testing collision avoidance)
                 angle_variation = np.pi / 6 # 30 degrees variation in incoming heading
 
                 # Randomly place planes on one of the four sides
