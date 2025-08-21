@@ -40,7 +40,7 @@ class PlaneSim:
         ]
         self.runway_length = 50 # length of each runway
 
-        # Define heli pads: position and radius
+        # Define heli pads: position and radius (for analysis of found solutions, use only np.array([90, 50]))
         self.helipad_pos = [
             np.array([0.8 * self.size, 0.5 * self.size]),
             np.array([0.2 * self.size, 0.2 * self.size])
@@ -217,7 +217,7 @@ class PlaneSim:
         for _ in range(self.n_planes):
             max_attempts = 100 # prevent infinite loops
             for _ in range(max_attempts):
-                side = np.random.choice(['top', 'left', 'right', 'bottom']) # only top and left now (for testing collision avoidance)
+                side = np.random.choice(['top', 'left', 'right', 'bottom']) # for analysis of found solutions, remove everything but 'left'
                 angle_variation = np.pi / 6 # 30 degrees variation in incoming heading
 
                 # Randomly place planes on one of the four sides
@@ -391,13 +391,13 @@ class PlaneSim:
         ax.set_ylim(0, self.size)
         ax.set_aspect('equal')
 
-        # Draw each runway
-        for pos, heading in self.runways:
-            length = self.runway_length
-            dx = length * np.cos(heading)
-            dy = length * np.sin(heading)
-            x, y = pos
-            ax.plot([x, x + dx], [y, y + dy], color='gray', linewidth=10, zorder=1)
+        # Draw each runway (not used for now)
+        # for pos, heading in self.runways:
+        #     length = self.runway_length
+        #     dx = length * np.cos(heading)
+        #     dy = length * np.sin(heading)
+        #     x, y = pos
+        #     ax.plot([x, x + dx], [y, y + dy], color='gray', linewidth=10, zorder=1)
 
         # Draw planes as arrows with collision circles
         for plane in self.planes:
