@@ -1,15 +1,32 @@
 import torch
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 from sim import PlaneSim
-from q_learning_agent import QLearningAgent, QLearningMultiAgent
+from q_learning_agent import QLearningMultiAgent
 from collections import defaultdict
 
-def visualize_q_policy(model_path='policy.pth', n_planes=1):
+# Function to set all seeds for reproducibility
+def set_all_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # Ensure deterministic behavior on GPUs
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+def visualize_q_policy(model_path='policy.pth', n_planes=5, seed=5):
     """
     Visualize the trained Q-learning policy in the PlaneSim environment.
     Works with the gym_agent.py and gym_train.py files.
     """
+    # Set all seeds for reproducibility
+    set_all_seeds(seed)
+
     # Initialize environment
     env = PlaneSim(n_planes=n_planes)
 
@@ -24,19 +41,11 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
     # Load the policy data
     loaded_data = torch.load(model_path, weights_only=False)
     
-    if isinstance(loaded_data, dict):
-        # Multi-agent policy case: load Q-values of each agent
-        for i, agent in enumerate(agents):
-            if i in loaded_data: # check if this agent's policy exists
-                agent.q_values = defaultdict(agent.zero_values, loaded_data[i])
-                agent.epsilon = 0.0 # no exploration during visualization
-    else:
-        # Single-agent policy case
-        if n_planes == 1:
-            agents[0].q_values = defaultdict(agents[0].zero_values, loaded_data)
-            agents[0].epsilon = 0.0
-        else:
-            raise ValueError("Loaded policy is not a multi-agent policy but n_planes > 1")
+    # Load Q-values of each agent
+    for i, agent in enumerate(agents):
+        if i in loaded_data: # check if this agent's policy exists
+            agent.q_values = defaultdict(agent.zero_values, loaded_data[i])
+            agent.epsilon = 0.0 # no exploration during visualization
     
     # Define turn increments (same as in training code)
     turn_increments = {
@@ -66,7 +75,7 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
 
             # Select action using the Q-table (no exploration)
             for agent in agents:
-                raw_state = env.get_simple_state(agent.plane_idx)
+                raw_state = env.get_state(agent.plane_idx)
                 state = tuple(env.discretize_state(raw_state))
                 obs.append(state)
 
@@ -83,7 +92,7 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
 
             # Loop over agents (planes) to get rewards
             for agent in agents:
-                reward = env.get_simple_reward(agent.plane_idx)
+                reward = env.get_reward(agent.plane_idx)
                 step_reward += reward
                 total_reward[agent.plane_idx] += reward
             
@@ -116,7 +125,7 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
                     f"  Status: {status}"
                 )
 
-                # Display Q-value only for active planes with valid actions (not working properly yet I think)
+                # Display Q-value only for active planes with valid actions
                 if plane.active:
                     q_values = agents[i].q_values.get(obs[i], np.zeros(5)) # display Q-value for the chosen action ([0,0,0,0,0] if state is new)
                     metrics_text += f"\n  Q-value: {float(q_values[actions[i]]):.2f}"
@@ -159,4 +168,4 @@ def visualize_q_policy(model_path='policy.pth', n_planes=1):
         print(f"Number of planes landed: {sum(1 for p in env.planes if not p.active and not env.collision)}/{n_planes}")
 
 if __name__ == "__main__":
-    visualize_q_policy(model_path='policy_multi_agent_3_planes.pth', n_planes=3)
+    visualize_q_policy(model_path='policy_qlearning_test.pth', n_planes=5, seed=5) # make sure n_planes and seed is same as what you trained with

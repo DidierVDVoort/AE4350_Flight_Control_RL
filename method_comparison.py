@@ -17,7 +17,7 @@ qlearning_rewards = qlearning_results['episode_rewards'].numpy()
 qlearning_epsilons = qlearning_results['episode_epsilons'].numpy()
 
 # Create comparison plots
-plt.figure()
+plt.figure(figsize=(6, 5))
 
 # First plot: smoothed rewards (moving average)
 window_size = 50
@@ -30,7 +30,7 @@ qlearning_smoothed = np.convolve(qlearning_rewards, np.ones(window_size)/window_
 dqn_smoothed_full = np.concatenate([np.zeros(window_size), dqn_smoothed])
 qlearning_smoothed_full = np.concatenate([np.zeros(window_size), qlearning_smoothed])
 
-plt.subplot(1, 2, 1)
+plt.subplot(2, 1, 1)
 plt.plot(dqn_smoothed_full, label='DQN')
 plt.plot(qlearning_smoothed_full, label='Q-Learning')
 plt.title(f'Smoothed Rewards (Window={window_size}) Comparison')
@@ -40,7 +40,7 @@ plt.legend()
 plt.grid(True)
 
 # Second plot: epsilon decay comparison
-plt.subplot(1, 2, 2)
+plt.subplot(2, 1, 2)
 plt.plot(dqn_epsilons, label='DQN')
 plt.plot(qlearning_epsilons, label='Q-Learning')
 plt.title('Epsilon Decay Comparison')
