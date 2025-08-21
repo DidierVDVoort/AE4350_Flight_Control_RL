@@ -21,6 +21,8 @@ Both methods train agents to navigate multiple aircraft to landing zones while a
 - `dqn_sensitivity.py`: Hyperparameter and environment sensitivity analysis
 - `method_comparison.py`: Performance comparison between both methods
 
+A quick note: in the `sim.py` file, there is some commented out code that was meant to be used when having different aircraft types in the environment. However, in the end it was opted to only have 'helicopters', which do not require runways, but only helipads. Nonetheless, in case I ever decide to extend this project after its deadline to also include different types of aircraft, the code is still there!
+
 ## Usage
 
 1. Train a DQN agent: `python dqn_train.py`
@@ -46,6 +48,7 @@ The results that were discussed in the report have also been saved already as .p
 - `dqn_results`: Results of the DQN approach for the comparison of methods (i.e. used in `method_comparison.py`) --> section 3.1 in the report.
 - `dqn_solution_analysis`: Results of the DQN approach for the analysis of found solutions (custom environment) --> section 3.2 in the report.
 - `figures`: Includes all figures shown in the report.
+- `misc_results`: An extra folder to dump miscellaneous results of training sessions. Includes results of training 2000 episodes for an environment with 10 planes (using different discount_factor=0.995 and learning_rate=0.001). The agent actually managed to improve a lot in these 2000 epochs and found a policy that works really well. The found policy is also saved as an image in the `figures` folder. However, there was no more space in the report...
 - `qlearning_results`: Results of the Q-Learning approach for the comparison of methods (i.e. used in `method_comparison.py`) --> section 3.1 in the report.
 - `sensitivity_results`: Sensitivity analysis results stored as .csv files. Can be used to plot sensitivity analysis resutls --> section 3.3 in the report.
 
