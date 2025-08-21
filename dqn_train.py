@@ -32,7 +32,7 @@ n_episodes = 200
 n_planes = 5
 max_replay_memory = 10000
 discount_factor = 0.99
-learning_rate = 0.001
+learning_rate = 0.01
 start_epsilon = 1.0 # start with 100% random actions
 final_epsilon = 0.01 # always keep some exploration
 epsilon_decay = 0.95
@@ -171,7 +171,7 @@ for episode in tqdm(range(n_episodes)):
         # Loop over all planes and update the agent with the new experiences
         for i in range(env.n_planes):
             next_state = env.get_dqn_state(i)
-            reward = env.get_simple_reward(i)
+            reward = env.get_reward(i)
 
             # Store experience in replay memory
             agent.remember(states[i], actions[i], reward, next_state, terminated)
@@ -180,7 +180,7 @@ for episode in tqdm(range(n_episodes)):
             states[i] = next_state
             total_reward += reward
 
-        agent.replay() # train the model using the replay buffer (also decays epsilon)
+        agent.replay() # train the model using the replay buffer
 
         if terminated:
             episode_rewards.append(total_reward)
@@ -242,4 +242,4 @@ training_results = {
     'training_time': training_time
 }
 
-torch.save(training_results, "dqn_seed_5.pth")
+# torch.save(training_results, "dqn_seed_5.pth")

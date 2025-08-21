@@ -24,10 +24,11 @@ class PlaneSim:
     def __init__(self, n_planes=5):
         self.size = 100 # size of the simulation area
         self.current_step = 0 # current step of the simulation
-        self.max_steps = 50 # maximum steps per episode
+        self.max_steps = int(0.5 * self.size) # maximum steps per episode
         self.collision_radius = 10 # radius for collision detection
         self.n_planes = n_planes # number of planes
         self.planes = []
+        self.plane_speed = 5
         self.landing_status = {} # dictionary to track landing status of planes and their landing zones
         self.collision = False # flag to indicate if a collision has occurred
         self.done = False # flag to indicate if the simulation is done
@@ -41,8 +42,8 @@ class PlaneSim:
 
         # Define heli pads: position and radius
         self.helipad_pos = [
-            np.array([80, 50]),
-            np.array([20, 20])
+            np.array([0.8 * self.size, 0.5 * self.size]),
+            np.array([0.2 * self.size, 0.2 * self.size])
         ]
         self.helipad_radius = 10 # radius of the heli pad
 
@@ -82,30 +83,8 @@ class PlaneSim:
 
         return tuple(discretized)
 
-    # Get the current state (right now unused, instead get_simple_state is used)
-    def get_state(self):
-        state = []
-        for plane in self.planes:
-            if plane.active:
-                dx = plane.speed * np.cos(plane.heading)
-                dy = plane.speed * np.sin(plane.heading)
-                state.extend([plane.position[0], plane.position[1], dx, dy])
-
-                # # Add relative position to nearest runway (for planes so not used for now)
-                # nearest = min(self.runways, key=lambda r: np.linalg.norm(plane.position - r[0]))
-                # rel = nearest[0] - plane.position
-                # state.extend(rel.tolist())
-
-                # Add relative position to nearest helipad (for helicopters)
-                nearest_helipad = min(self.helipad_pos, key=lambda hp: np.linalg.norm(plane.position - hp))
-                rel_helipad = nearest_helipad - plane.position
-                state.extend(rel_helipad.tolist())
-            else:
-                state.extend([0, 0, 0, 0, 0, 0])  # zero everything for inactive
-        return np.array(state)
-
-    # Simpler state space representation (for q-learning algorithm)
-    def get_simple_state(self, plane_idx):
+    # State space representation
+    def get_state(self, plane_idx):
         state = []
         plane = self.planes[plane_idx]
 
@@ -190,115 +169,22 @@ class PlaneSim:
             rel_bearing_other / np.pi      # normalized rel bearing to nearest other plane
         ], dtype=np.float32)
 
-    # Get the intruder state (relative positions and headings of all other planes) --> not used not, instead get_simple_state is used
-    def get_intruder_state(self):
-        state = []
-        active_planes = [p for p in self.planes if p.active]
-
-        for i, plane in enumerate(self.planes):
-            if plane.active:
-                count = 0
-                for j, other in enumerate(self.planes):
-                    if i == j or not other.active:
-                        continue
-
-                    vec = other.position - plane.position
-                    dist = np.linalg.norm(vec)
-                    angle = np.arctan2(vec[1], vec[0])
-                    rel_angle = (angle - plane.heading + np.pi) % (2*np.pi) - np.pi
-                    heading_diff = (other.heading - plane.heading + np.pi) % (2*np.pi) - np.pi
-
-                    state.extend([dist, rel_angle, heading_diff])
-                    count += 1
-
-                # pad if fewer intruders
-                while count < self.n_planes - 1:
-                    state.extend([0, 0, 0])
-                    count += 1
-            else:
-                # inactive plane
-                state.extend([0, 0, 0] * (self.n_planes - 1))
-
-        return np.array(state)
-
-    # Get the reward (not used right now, instead get_simple_reward is used)
-    def get_reward(self):
-        # Different reward components for logging
-        components = {
-            'landing': 0,
-            'collision': 0,
-            'edge': 0,
-            'progress': 0
-        }
-        
-        # # Landing rewards (for planes) (not used for now)
-        # for i, plane in enumerate(self.planes):
-        #     if self.landing_status[i] and self.landing_status[i]["status"] == "redirecting":
-        #         components['landing'] += 0.3 # Partial reward for entering landing triangle
-        #     if not plane.active and i in self.landing_status:
-        #         components['landing'] += 1.0  # Full reward for landing successfully
-
-        # Landing rewards (for helicopters)
-        for helipad_pos in self.helipad_pos:
-            for plane in self.planes:
-                if plane.active and self.crossed_helipad(plane, helipad_pos):
-                    components['landing'] += 1.0 # full reward for landing successfully
-
-        # # Tiny progress reward (distance to nearest runway) (for planes so not used for now)
-        # for plane in self.planes:
-        #     if plane.active:
-        #         min_dist = min(np.linalg.norm(plane.position - r[0]) for r in self.runways)
-        #         components['progress'] += 0.01 * (self.size - min_dist) / self.size
-
-        # Tiny progress reward (distance to nearest helipad) (for helicopters)
-        for plane in self.planes:
-            if plane.active:
-                min_dist = min(np.linalg.norm(plane.position - helipad) for helipad in self.helipad_pos)
-                components['progress'] += (0.5 * (self.size - min_dist) / self.size) / self.max_steps
-        
-        # Penalties for collisions and edge hits
-        for i in range(len(self.planes)):
-            for j in range(i+1, len(self.planes)):
-                if self.planes[i].active and self.planes[j].active and self.check_collision(self.planes[i], self.planes[j]):
-                    components['collision'] -= 1 # severe penalty for collision
-                    
-            if self.edge_hit_occurred:
-                components['edge'] -= 0.5 / self.max_steps # small penalty for hitting the edge
-
-        total = sum(components.values())
-        return total, components # also return breakdown of components for logging
-
-    # Simpler reward function
-    def get_simple_reward(self, plane_idx):
+    # Reward function
+    def get_reward(self, plane_idx):
         reward = 0
-        time_penalty = -0.01 # encourages faster landings
+        # 1. Time penalty (encourages faster landings)
+        time_penalty = -0.01
+
         plane = self.planes[plane_idx]
         
-        # 1. Landing reward (time-discounted, i.e. more reward if landed earlier)
+        # 2. Landing reward (time-discounted, i.e. more reward if landed earlier)
         for helipad_pos in self.helipad_pos:
             if plane.active and self.crossed_helipad(plane, helipad_pos):
                 time_factor = 1.0 - (self.current_step / self.max_steps)
                 reward += 100.0 * (0.5 + 0.5*time_factor) # 100-50 points based on when they land
                 plane.active = False # deactivate plane after landing
 
-        # 2. Distance-based reward (more reward as planes get closer to landing zone) --> does not seem to affect results
-        # active_count = sum(1 for p in self.planes if p.active)
-        # active_count = 1
-        # if plane.active:
-        #     min_dist = min(np.linalg.norm(plane.position - hp) for hp in self.helipad_pos) # distance to nearest helipad
-        #     reward += (1 - (min_dist / self.size)) * (0.5 / max(1, active_count)) # scaled with active plane count
-
-        # 3. Penalize getting too close to edges
-        # edge_threshold = 0.1 * self.size
-        # for plane in self.planes:
-        #     if plane.active:
-        #         x, y = plane.position
-        #         near_edge = (x < edge_threshold or x > self.size - edge_threshold or
-        #                     y < edge_threshold or y > self.size - edge_threshold)
-        #         if near_edge:
-        #             reward -= 0.2
-
-        # 4. Collision avoidance penalty (penalize proximity to other planes)
+        # 3. Collision avoidance penalty (penalize proximity to other planes)
         if plane.active:
             min_other_dist = self.size * 2 # initialize with a large value
             for other_idx, other_plane in enumerate(self.planes):
@@ -312,14 +198,9 @@ class PlaneSim:
                 proximity_penalty = -10.0 * (1 - (min_other_dist / (0.25 * self.size))) # scales from 0 to -10
                 reward += proximity_penalty
 
-        # 5. Collision penalty
+        # 4. Collision penalty
         if self.collision:
             reward -= 10.0
-
-        # # 6. Small penalty for unnecessary turns
-        # for action in actions:
-        #     if action != 0:
-        #         reward -= 0.05
 
         return reward + time_penalty
 
@@ -357,7 +238,7 @@ class PlaneSim:
                 if all(np.linalg.norm(np.array(pos) - np.array(existing)) >= min_spawn_distance for existing in spawn_positions):
                     spawn_positions.append(pos)
                     heading = base_heading + np.random.uniform(-angle_variation, angle_variation)
-                    self.planes.append(Plane(pos, heading))
+                    self.planes.append(Plane(pos, heading, self.plane_speed))
                     break
             else:
                 raise ValueError("Failed to place plane without collision after 100 attempts.")
@@ -430,21 +311,6 @@ class PlaneSim:
             plane.heading = (plane.heading + np.pi) % (2 * np.pi) - np.pi
     
         return bounced
-    
-    # Not used for now
-    def find_intruder_pairs(self, threshold=60):
-        intruder_pairs = []
-        for i, p1 in enumerate(self.planes):
-            if not p1.active:
-                continue
-            for j in range(i + 1, len(self.planes)):
-                p2 = self.planes[j]
-                if not p2.active:
-                    continue
-                dist = np.linalg.norm(p1.position - p2.position)
-                if dist < threshold:
-                    intruder_pairs.append((i, j))
-        return intruder_pairs
 
     # Step the simulation (basically update plane positions and check for collisions/landings)
     def step(self):
@@ -537,9 +403,9 @@ class PlaneSim:
         for plane in self.planes:
             if plane.active:
                 x, y = plane.position
-                dx = 20 * np.cos(plane.heading)
-                dy = 20 * np.sin(plane.heading)
-                ax.arrow(x, y, dx, dy, head_width=10, color='blue')
+                dx = 0.1 * self.size * np.cos(plane.heading) # scale length of arrows with environment size
+                dy = 0.1 * self.size * np.sin(plane.heading) # scale length of arrows with environment size
+                ax.arrow(x, y, dx, dy, head_width=0.05 * self.size, color='blue') # scale head width with environment size
 
                 # Draw the collision circle
                 collision_circle = plt.Circle(

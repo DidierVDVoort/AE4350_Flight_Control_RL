@@ -6,10 +6,8 @@ from sim import PlaneSim
 import matplotlib
 import numpy as np
 import torch
-from q_learning_agent import QLearningAgent, QLearningMultiAgent
+from q_learning_agent import QLearningMultiAgent
 from itertools import count
-
-# Useful website: https://gymnasium.farama.org/introduction/train_agent/
 
 # Function to set all seeds for reproducibility
 def set_all_seeds(seed):
@@ -25,7 +23,7 @@ def set_all_seeds(seed):
         torch.backends.cudnn.benchmark = False
 
 # Training hyperparameters
-seed = 100
+seed = 5
 n_episodes = 200
 n_planes = 5
 discount_factor = 0.99
@@ -147,7 +145,7 @@ for episode in tqdm(range(n_episodes)):
 
     # Get initial observations
     for agent in agents:
-        raw_state = env.get_simple_state(agent.plane_idx)
+        raw_state = env.get_state(agent.plane_idx)
         obs.append(tuple(env.discretize_state(raw_state)))
 
     # Play one complete simulation (until all planes landed, collided or max. steps is reached)
@@ -170,9 +168,9 @@ for episode in tqdm(range(n_episodes)):
 
         # Loop over agents (planes) and update them with the new observations and rewards
         for agent in agents:
-            raw_next_obs = env.get_simple_state(agent.plane_idx) # new state (raw)
+            raw_next_obs = env.get_state(agent.plane_idx) # new state (raw)
             next_obs = tuple(env.discretize_state(raw_next_obs)) # new state (discretized)
-            reward = env.get_simple_reward(agent.plane_idx)
+            reward = env.get_reward(agent.plane_idx)
             total_reward[agent.plane_idx] += reward
 
             # Let the agent learn from this environment step
@@ -221,7 +219,7 @@ if not is_ipython:
 
 # Save all policies (i.e. 1 for each agent) in a dictionary with their indices as keys
 policies = {i: dict(agent.q_values) for i, agent in enumerate(agents)}
-torch.save(policies, "policy_multi_agent_3_planes.pth")
+torch.save(policies, "policy_qlearning_test.pth")
 
 # Save training results for comparison
 training_results = {
@@ -239,4 +237,4 @@ training_results = {
     'training_time': training_time
 }
 
-torch.save(training_results, "qlearning_seed_100.pth")
+# torch.save(training_results, "qlearning_seed_5.pth")
