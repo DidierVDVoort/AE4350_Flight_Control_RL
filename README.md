@@ -31,6 +31,8 @@ Both methods train agents to navigate multiple aircraft to landing zones while a
 
 ## Requirements
 
+See `requirements.txt`, i.e.:
+- Pandas
 - Python 3.7+
 - PyTorch
 - NumPy
